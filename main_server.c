@@ -37,6 +37,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <errno.h>
+#include <netdb.h>
+#include <ifaddrs.h>
 #endif
 
 
@@ -96,6 +98,8 @@ void ONVIF_soap_delete(struct soap *soap)
 
 void get_local_ip(char *ip_buffer, size_t buffer_size)
 {
+#ifdef _WIN32
+    // Windows 平台使用原有方法
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -120,10 +124,49 @@ void get_local_ip(char *ip_buffer, size_t buffer_size)
         strncpy(ip_buffer, "127.0.0.1", buffer_size);
     }
 
-#ifdef _WIN32
     closesocket(sock);
 #else
-    close(sock);
+    // Linux 平台直接从网络接口获取IP地址，不连接外网
+    struct ifaddrs *ifaddr, *ifa;
+    int family;
+    char host[NI_MAXHOST];
+
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        strncpy(ip_buffer, "127.0.0.1", buffer_size);
+        return;
+    }
+
+    // 遍历所有网络接口
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) {
+            continue;
+        }
+
+        family = ifa->ifa_addr->sa_family;
+
+        // 只处理IPv4地址
+        if (family == AF_INET) {
+            int s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+                               host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+            if (s != 0) {
+                printf("getnameinfo() failed: %s\n", gai_strerror(s));
+                continue;
+            }
+
+            // 跳过回环接口，优先选择wlan0或eth0
+            if (strcmp(ifa->ifa_name, "lo") != 0) {
+                printf("Found interface %s with IP %s\n", ifa->ifa_name, host);
+                strncpy(ip_buffer, host, buffer_size);
+                freeifaddrs(ifaddr);
+                return;
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    // 如果没有找到合适的接口，使用127.0.0.1
+    strncpy(ip_buffer, "127.0.0.1", buffer_size);
 #endif
 }
 
@@ -184,12 +227,23 @@ static void *wsdd_server_thread(void *arg) {
     printf("socket bind success %d\n", m);
 
     mcast.imr_multiaddr.s_addr = inet_addr(ONVIF_UDP_IP);
-    mcast.imr_interface.s_addr = htonl(INADDR_ANY);
+    
+    // 使用实际的wlan0 IP地址加入多播组
+    struct in_addr local_addr;
+    if (inet_pton(AF_INET, g_local_ip, &local_addr) == 1) {
+        mcast.imr_interface.s_addr = local_addr.s_addr;
+        printf("Joining multicast group using interface with IP: %s\n", g_local_ip);
+    } else {
+        mcast.imr_interface.s_addr = htonl(INADDR_ANY);
+        printf("Joining multicast group using all interfaces\n");
+    }
+    
     //IP_ADD_MEMBERSHIP用于加入某个多播组，之后就可以向这个多播组发送数据或者从多播组接收数据
     if(setsockopt(UDPserverSoap.master, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mcast, sizeof(mcast)) < 0)
     {
         printf("setsockopt error! error code = %d,err string = %s\n",errno,strerror(errno));
-        return 0;
+        // 即使加入多播组失败，也继续运行，因为UDP服务仍然可以工作
+        printf("Continuing without multicast membership\n");
     }
     
     int fd = -1;
