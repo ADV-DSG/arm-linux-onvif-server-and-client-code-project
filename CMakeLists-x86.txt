@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.5)
+project(ONVIF-DEMO)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWITH_NONAMESPACES  -DWITH_DOM -DWITH_OPENSSL")
+include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(/usr/include)
+add_definitions("-Wall -g ")
+
+add_compile_options(-w)
+
+# 客户端程序
+set(CLIENT_SRC_LIST dom.c mecevp.c soapC.c stdsoap2.c  threads.c wsseapi.c main_client.c smdevp.c soapClient.c struct_timeval.c wsaapi.c)
+add_executable(ONVIF-CLIENT ${CLIENT_SRC_LIST})
+
+
+
+# # 服务端程序
+set(CLIENT_SRC_LIST dom.c mecevp.c soapC.c stdsoap2.c  threads.c wsseapi.c main_server.c smdevp.c soapServer.c soapClient.c struct_timeval.c wsaapi.c onvif_server_interface.c)
+add_executable(ONVIF-SERVER ${CLIENT_SRC_LIST})
+
+
+target_link_libraries(ONVIF-CLIENT  -lcrypto -lssl)
+
+target_link_libraries(ONVIF-SERVER PRIVATE  -lcrypto -lssl)
+target_link_libraries(ONVIF-SERVER PRIVATE -lpthread)
+
+
+
+
+
+
+
